@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+data/
+agent_memory.json
+metrics/
