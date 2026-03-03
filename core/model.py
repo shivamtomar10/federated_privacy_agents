@@ -60,4 +60,3 @@ class FederatedModel:
             preds = np.argmax(logits, axis=1)
 
         return np.mean(preds == y)
-

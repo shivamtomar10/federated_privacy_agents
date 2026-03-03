@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.model_selection import train_test_split
 
 from core.feature_encoder import encode
 from core.schema_inference import infer_schema
@@ -85,9 +86,18 @@ class HospitalAgent:
 
         class_imbalance = max(class_distribution.values()) if class_distribution else 0
 
+        # --- UPDATED LOGIC ---
         numeric_features = df.select_dtypes(include=["number"]).columns.tolist()
-        numeric_features = [
-            col for col in numeric_features
+
+        # We manually add 'age' back to the list of features to track
+        # because it is now a string/category after masking.
+        all_model_features = numeric_features.copy()
+        if "age" in df.columns:
+            all_model_features.append("age")
+
+        # Filter out sensitive and target columns
+        features_to_report = [
+            col for col in all_model_features
             if col not in sensitive_cols and col != target_column
         ]
 
@@ -98,7 +108,7 @@ class HospitalAgent:
             "class_counts": class_counts,
             "class_distribution": class_distribution,
             "class_imbalance": class_imbalance,
-            "numeric_features": numeric_features
+            "numeric_features": features_to_report  # This will now include 'age'
         }
 
     # ===============================
@@ -108,28 +118,25 @@ class HospitalAgent:
 
         memory_summary = summarize_memory()
 
-        eps_candidates = [0.3, 0.5, 0.7]
-        lr_candidates = [0.01, 0.02]
+        # UPDATED: Use higher epsilon for better signal-to-noise ratio
+        eps_candidates = [1.0, 5.0, 10.0]
+        lr_candidates = [0.1, 0.5]
 
         bad_eps = memory_summary.get("bad_epsilons", set())
         eps_candidates = [e for e in eps_candidates if e not in bad_eps]
 
         strategies = []
-
         for eps in eps_candidates:
             for lr in lr_candidates:
                 strategies.append({
-                    "epochs": 3 if analysis["rows"] < 5000 else 8,
+                    "epochs": 8 if analysis["rows"] < 5000 else 15,
                     "lr": lr,
                     "epsilon": eps,
-                    "risk_level": (
-                        "HIGH" if analysis["class_imbalance"] > 0.9 else "LOW"
-                    )
+                    "risk_level": ("HIGH" if analysis["class_imbalance"] > 0.9 else "LOW")
                 })
-
         return strategies
 
-    # ===============================
+    # ================================
     # REWARD FUNCTION
     # ===============================
     def compute_reward(self, accuracy, epsilon):
@@ -153,96 +160,74 @@ class HospitalAgent:
 
         schema = infer_schema(df)
         sensitivity = detect_sensitive_columns(schema)
+        sensitive_cols = [c for c, risk in sensitivity.items() if risk == "HIGH"]
 
-        sensitive_cols = [
-            c for c, risk in sensitivity.items()
-            if risk == "HIGH"
-        ]
-
-        # Remove sensitive columns
         df_model = df.drop(columns=sensitive_cols, errors="ignore")
-
-        # Encode categorical features
         df_model = encode(df_model)
 
-        # GLOBAL FEATURE ALIGNMENT
         if self.global_feature_list is not None:
-            df_model = df_model.reindex(
-                columns=self.global_feature_list,
-                fill_value=0
-            )
+            df_model = df_model.reindex(columns=self.global_feature_list, fill_value=0)
 
-        # Separate features and target
         X_df = df_model.drop(columns=[target], errors="ignore")
-
-        # Force numeric
-        X_df = X_df.apply(pd.to_numeric, errors="coerce")
-        X_df = X_df.fillna(0)
-        X_df = X_df.astype(np.float64)
-
+        X_df = X_df.apply(pd.to_numeric, errors="coerce").fillna(0).astype(np.float64)
         X = X_df.to_numpy(dtype=np.float64)
 
-        # Target encoding (multi-class)
         y = LabelEncoder().fit_transform(df[target])
         num_classes = len(np.unique(y))
 
-        # Dimensionality reduction (optional)
         if X.shape[1] > 200:
             pca = PCA(n_components=200)
             X = pca.fit_transform(X)
 
-        # Normalize
         X = (X - np.mean(X, axis=0)) / (np.std(X, axis=0) + 1e-8)
 
-        # class weights (handle imbalance)
-        classes = np.unique(y)
-        class_weights = compute_class_weight('balanced', classes=classes, y=y)
-        sample_weights = class_weights[y]
+        # --- NEW: SPLIT DATA INTO TRAIN AND VALIDATION ---
+        # We split 80% for training and 20% for validation to check generalization
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
 
-        print("Actual feature count:", X.shape[1])
-        print("Feature dtype:", X.dtype)
+        classes = np.unique(y_train)
+        class_weights = compute_class_weight('balanced', classes=classes, y=y_train)
+        sample_weights_train = class_weights[y_train]
 
         best = None
         strategy_results = []
 
         for strategy in strategies:
-
-            model_dim = X.shape[1]
+            model_dim = X_train.shape[1]
             model = FederatedModel(model_dim, num_classes)
 
+            # IMPROVED LOADING: Handle shape mismatches safely
             if self.global_weights is not None:
-                if isinstance(self.global_weights, np.ndarray):
-                    if self.global_weights.shape == model.weights.shape:
-                        model.weights = self.global_weights.copy()
+                g_w = self.global_weights
+                # Determine the overlapping shape
+                r = min(g_w.shape[0], model.weights.shape[0])
+                c = min(g_w.shape[1], model.weights.shape[1])
+                # Inject global knowledge into the new local model
+                model.weights[:r, :c] = g_w[:r, :c]
+                print(f"📥 Loaded global weights (subset {r}x{c})")
 
             initial_weights = model.weights.copy()
 
-            # custom training with class weights
+            # Training Loop on X_train
             for _ in range(strategy["epochs"]):
-
-                logits = X @ model.weights
+                logits = X_train @ model.weights
                 exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
                 probs = exp / np.sum(exp, axis=1, keepdims=True)
-
-                one_hot = np.eye(num_classes)[y]
-
-                # weighted gradient
-                grad = (X.T @ ((probs - one_hot) * sample_weights[:, None])) / len(y)
-
+                one_hot = np.eye(num_classes)[y_train]
+                grad = (X_train.T @ ((probs - one_hot) * sample_weights_train[:, None])) / len(y_train)
                 model.weights -= strategy["lr"] * grad
 
             update = model.weights - initial_weights
 
-            # multi-class prediction
-            logits = X @ model.weights
-            exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
-            probs = exp / np.sum(exp, axis=1, keepdims=True)
-            preds = np.argmax(probs, axis=1)
+            # --- NEW: EVALUATE ON VALIDATION SET (X_val) ---
+            val_logits = X_val @ model.weights
+            preds = np.argmax(val_logits, axis=1)
+            accuracy = np.mean(preds == y_val)
 
-            accuracy = np.mean(preds == y)
             reward = self.compute_reward(accuracy, strategy["epsilon"])
-
-            print(f"🔍 Strategy {strategy} → Accuracy={accuracy:.4f}, Reward={reward}")
+            print(f"🔍 Strategy {strategy} → Val Accuracy={accuracy:.4f}, Reward={reward}")
 
             strategy_results.append({
                 "country": self.country,
@@ -300,4 +285,3 @@ class HospitalAgent:
             "strategy": strategy,
             "strategy_results": strategy_results
         }
-

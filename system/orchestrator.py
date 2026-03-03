@@ -1,7 +1,7 @@
 # system/orchestrator.py
 
 from collections import Counter
-
+import numpy as np
 from core.schema_inference import infer_schema
 from core.sensitivity_detector import detect_sensitive_columns
 from core.privacy import apply_privacy
@@ -102,7 +102,10 @@ class FederatedOrchestrator:
             # 3️⃣ Aggregate Global Model
             # --------------------------------------
             global_weights, _ = self.global_agent.aggregate(country_updates)
-            print(f"\n✅ Aggregation complete for Round {r + 1}")
+            if global_weights is None:
+                print("⚠️ Warning: Global weights aggregation failed!")
+            else:
+                print(f"✅ Aggregation complete. Weight Norm: {np.linalg.norm(global_weights):.2f}")
 
             # --------------------------------------
             # 4️⃣ Final Report (Last Round Only)
@@ -135,4 +138,3 @@ class FederatedOrchestrator:
         return {
             "global_weights": global_weights
         }
-
