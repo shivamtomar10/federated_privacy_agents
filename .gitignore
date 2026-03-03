@@ -4,3 +4,4 @@ __pycache__/
 data/
 agent_memory.json
 metrics/
+__pycache__/
