@@ -1,76 +1,83 @@
+# agents/global_agent.py
+
 import numpy as np
 
-<<<<<<< HEAD
+
 class GlobalAgent:
+    """
+    Federated Aggregator (Stable & Tuned)
+    -------------------------------------
+    - True FedAvg (delta-based updates)
+    - Safer gradient clipping
+    - Soft normalization instead of hard clipping
+    - Prevents norm saturation (fixes constant 1.0 issue)
+    """
+
     def __init__(self):
-        # NEW: Store the state so we don't lose progress between rounds
         self.current_weights = None
-=======
 
-class GlobalAgent:
-    """
-    Federated Aggregator (Matrix-Aware)
-    -----------------------------------
-    - averages weight matrices (features x classes)
-    - handles different shapes via padding
-    - no secure aggregation mismatch
-    """
->>>>>>> 19b0456 (Initial federated privacy agents code)
+    def aggregate(self, filtered_updates):
+        if not filtered_updates:
+            return self.current_weights, {"error": "No valid updates"}
 
-    def aggregate(self, country_updates):
-        updates = []
+        # ------------------------------
+        # 1️⃣ Total data size
+        # ------------------------------
+        total_rows = sum(u["analysis"]["rows"] for u in filtered_updates.values())
 
-        for country, update in country_updates.items():
-            if update["strategy"]["risk_level"] == "HIGH":
-                print(f"⚠️ Skipping {country} (high risk)")
-                continue
+        # ------------------------------
+        # 2️⃣ Find max shape (padding)
+        # ------------------------------
+        max_rows = max(u["weights"].shape[0] for u in filtered_updates.values())
+        max_cols = max(u["weights"].shape[1] for u in filtered_updates.values())
 
-            weights = update["weights"]
-            updates.append(weights)
+        aggregated_update = np.zeros((max_rows, max_cols))
 
-        if not updates:
-            raise ValueError("❌ No valid updates to aggregate")
+        # ------------------------------
+        # 3️⃣ Aggregate Updates (FedAvg)
+        # ------------------------------
+        for country, data in filtered_updates.items():
+            update = data["weights"]
+            rows = data["analysis"]["rows"]
 
-<<<<<<< HEAD
-        # Find max shape
-=======
-        # find max shape
->>>>>>> 19b0456 (Initial federated privacy agents code)
-        max_rows = max(w.shape[0] for w in updates)
-        max_cols = max(w.shape[1] for w in updates)
-
-        padded_updates = []
-<<<<<<< HEAD
-=======
-
->>>>>>> 19b0456 (Initial federated privacy agents code)
-        for w in updates:
             padded = np.zeros((max_rows, max_cols))
-            padded[:w.shape[0], :w.shape[1]] = w
-            padded_updates.append(padded)
+            padded[:update.shape[0], :update.shape[1]] = update
 
-<<<<<<< HEAD
-        # --- THE FIX STARTS HERE ---
-        # 1. Calculate the average of the NEW updates
-        avg_update = np.mean(padded_updates, axis=0)
+            # ✅ Improved clipping (less aggressive)
+            norm = np.linalg.norm(padded)
+            if norm > 10.0:
+                padded = padded * (10.0 / (norm + 1e-8))
 
-        # 2. Use a Global Learning Rate (eta) to dampen noise
-        # 0.2 means we keep 80% of old knowledge and add 20% of new findings.
-        global_lr = 1.0
+            contribution_weight = rows / total_rows
+            aggregated_update += padded * contribution_weight
 
+        # ------------------------------
+        # 4️⃣ Apply UPDATE correctly
+        # ------------------------------
         if self.current_weights is None:
-            # First round: take the average directly
-            self.current_weights = avg_update
+            # First round → initialize directly
+            self.current_weights = aggregated_update
         else:
-            # Rounds 2+: ADD the new update to the old weights slowly
-            # This is the "FedAvg" way to maintain high accuracy
-            self.current_weights = self.current_weights + (global_lr * avg_update)
+            # ✅ Tuned global learning rate
+            lr_global = 0.15
 
-        return self.current_weights, {}
-=======
-        # average matrices
-        global_weights = np.mean(padded_updates, axis=0)
+            # Match shapes safely
+            new_weights = np.zeros_like(aggregated_update)
 
-        return global_weights, {}
+            r = min(self.current_weights.shape[0], aggregated_update.shape[0])
+            c = min(self.current_weights.shape[1], aggregated_update.shape[1])
 
->>>>>>> 19b0456 (Initial federated privacy agents code)
+            new_weights[:r, :c] = self.current_weights[:r, :c]
+
+            # ✅ TRUE UPDATE STEP
+            self.current_weights = new_weights + lr_global * aggregated_update
+
+        # ------------------------------
+        # 5️⃣ Soft Normalization (instead of hard clip)
+        # ------------------------------
+        norm = np.linalg.norm(self.current_weights)
+        if norm > 10.0:
+            self.current_weights = self.current_weights * (10.0 / (norm + 1e-8))
+
+        return self.current_weights, {"total_rows": total_rows}
+

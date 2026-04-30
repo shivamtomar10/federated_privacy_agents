@@ -3,32 +3,18 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from sklearn.decomposition import PCA
-from sklearn.utils.class_weight import compute_class_weight
-<<<<<<< HEAD
 from sklearn.model_selection import train_test_split
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
 
-from core.feature_encoder import encode
 from core.schema_inference import infer_schema
 from core.sensitivity_detector import detect_sensitive_columns
-from core.privacy import apply_privacy, add_differential_privacy
+from core.privacy import apply_privacy
 from core.data_sanitizer import sanitize
 from core.model import FederatedModel
 
-from agents.agent_memory import (
-    save_experience,
-    summarize_memory
-)
+from agents.agent_memory import summarize_memory
 
 
 class HospitalAgent:
-
-    GOALS = {
-        "min_accuracy": 0.70,
-        "min_epsilon": 0.3
-    }
 
     def __init__(self, country, csv_path, global_weights=None, global_feature_list=None):
         self.country = country
@@ -36,9 +22,9 @@ class HospitalAgent:
         self.global_weights = global_weights
         self.global_feature_list = global_feature_list
 
-    # ===============================
-    # DATA LOADING
-    # ===============================
+        # ✅ GLOBAL ENCODER CACHE (important)
+        self.encoders = {}
+
     def load_data(self):
         df = pd.read_csv(self.csv_path, engine="python", on_bad_lines="skip")
         print(f"Loaded {len(df)} rows from {self.country}")
@@ -51,333 +37,176 @@ class HospitalAgent:
                 return col
         raise ValueError("❌ Cannot infer target column")
 
-    # ===============================
-    # FEATURE EXTRACTION
-    # ===============================
     def get_feature_list(self, df, target):
+        df_features, _ = self.preprocess(df, [], target)
+        return sorted(list(df_features.columns))
 
-        schema = infer_schema(df)
-        sensitivity = detect_sensitive_columns(schema)
+    # ===============================
+    # PREPROCESSING (FIXED)
+    # ===============================
+    def _encode_column(self, col, values):
+        if col not in self.encoders:
+            le = LabelEncoder()
+            le.fit(values.astype(str))
+            self.encoders[col] = le
 
-        sensitive_cols = [
-            c for c, risk in sensitivity.items()
-            if risk == "HIGH"
+        return self.encoders[col].transform(values.astype(str))
+
+    def preprocess(self, df, sensitive_cols, target):
+        df = df.copy()
+
+        junk_keywords = ["phone", "id", "address", "name", "email", "mobile", "ssn"]
+
+        cols_to_drop = [
+            col for col in df.columns
+            if any(k in col.lower() for k in junk_keywords) or col in sensitive_cols
         ]
 
-        df_model = df.drop(columns=sensitive_cols, errors="ignore")
-        df_model = encode(df_model)
-        df_model = df_model.drop(columns=[target], errors="ignore")
+        df = df.drop(columns=cols_to_drop, errors="ignore")
 
-        return df_model.columns.tolist()
+        y = None
+        if target in df.columns:
+            y = LabelEncoder().fit_transform(df[target].astype(str))
+            df = df.drop(columns=[target], errors="ignore")
+
+        # ✅ CONSISTENT encoding
+        for col in df.columns:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = self._encode_column(col, df[col])
+
+        df = df.fillna(0)
+
+        return df, y
 
     # ===============================
-    # DATA ANALYSIS
+    # ANALYSIS
     # ===============================
     def analyze_dataset(self, df, sensitivity, target_column):
-
-        sensitive_cols = [
-            col for col, risk in sensitivity.items()
-            if risk == "HIGH"
-        ]
-
-        class_counts = df[target_column].value_counts().to_dict()
         total_rows = len(df)
 
-        class_distribution = {
-            k: v / total_rows for k, v in class_counts.items()
-        }
+        df_clean, _ = self.preprocess(df, sensitivity.keys(), target_column)
 
-        class_imbalance = max(class_distribution.values()) if class_distribution else 0
-
-<<<<<<< HEAD
-        # --- UPDATED LOGIC ---
-        numeric_features = df.select_dtypes(include=["number"]).columns.tolist()
-
-        # We manually add 'age' back to the list of features to track
-        # because it is now a string/category after masking.
-        all_model_features = numeric_features.copy()
-        if "age" in df.columns:
-            all_model_features.append("age")
-
-        # Filter out sensitive and target columns
-        features_to_report = [
-            col for col in all_model_features
-=======
-        numeric_features = df.select_dtypes(include=["number"]).columns.tolist()
-        numeric_features = [
-            col for col in numeric_features
->>>>>>> 19b0456 (Initial federated privacy agents code)
-            if col not in sensitive_cols and col != target_column
-        ]
+        class_counts = df[target_column].value_counts().to_dict()
+        class_dist = {k: v / total_rows for k, v in class_counts.items()}
 
         return {
             "rows": total_rows,
-            "sensitive_features": sensitive_cols,
-            "sensitive_ratio": len(sensitive_cols) / max(len(df.columns), 1),
+            "sensitive_features": [c for c, r in sensitivity.items() if r == "HIGH"],
+            "sensitive_ratio": len(sensitivity) / max(len(df.columns), 1),
             "class_counts": class_counts,
-            "class_distribution": class_distribution,
-            "class_imbalance": class_imbalance,
-<<<<<<< HEAD
-            "numeric_features": features_to_report  # This will now include 'age'
-=======
-            "numeric_features": numeric_features
->>>>>>> 19b0456 (Initial federated privacy agents code)
+            "class_imbalance": max(class_dist.values()) if class_dist else 0,
+            "numeric_features": list(df_clean.columns)
         }
 
     # ===============================
-    # STRATEGY DESIGN
+    # STRATEGY
     # ===============================
     def decide_strategies(self, analysis):
-
         memory_summary = summarize_memory()
 
-<<<<<<< HEAD
-        # UPDATED: Use higher epsilon for better signal-to-noise ratio
         eps_candidates = [1.0, 5.0, 10.0]
-        lr_candidates = [0.1, 0.5]
-=======
-        eps_candidates = [0.3, 0.5, 0.7]
-        lr_candidates = [0.01, 0.02]
->>>>>>> 19b0456 (Initial federated privacy agents code)
+        lr_candidates = [0.05, 0.1]
 
         bad_eps = memory_summary.get("bad_epsilons", set())
         eps_candidates = [e for e in eps_candidates if e not in bad_eps]
 
         strategies = []
-<<<<<<< HEAD
-        for eps in eps_candidates:
-            for lr in lr_candidates:
-                strategies.append({
-                    "epochs": 8 if analysis["rows"] < 5000 else 15,
-                    "lr": lr,
-                    "epsilon": eps,
-                    "risk_level": ("HIGH" if analysis["class_imbalance"] > 0.9 else "LOW")
-                })
-        return strategies
-
-    # ================================
-=======
 
         for eps in eps_candidates:
             for lr in lr_candidates:
                 strategies.append({
-                    "epochs": 3 if analysis["rows"] < 5000 else 8,
+                    "epochs": 5 if analysis["rows"] < 5000 else 10,
                     "lr": lr,
                     "epsilon": eps,
-                    "risk_level": (
-                        "HIGH" if analysis["class_imbalance"] > 0.9 else "LOW"
-                    )
+                    "risk_level": "HIGH" if analysis["class_imbalance"] > 0.9 else "LOW"
                 })
 
         return strategies
 
     # ===============================
->>>>>>> 19b0456 (Initial federated privacy agents code)
-    # REWARD FUNCTION
-    # ===============================
-    def compute_reward(self, accuracy, epsilon):
-
-        reward = 0
-
-        if accuracy >= 0.85:
-            reward += 2
-        elif accuracy >= 0.70:
-            reward += 1
-
-        if epsilon >= 0.5:
-            reward += 1
-
-        return reward
-
-    # ===============================
-    # TRAINING LOOP (multi-class + class weights)
+    # TRAINING (FIXED)
     # ===============================
     def train_with_planning(self, df, strategies, target):
+        df_model, y = self.preprocess(df, [], target)
 
-        schema = infer_schema(df)
-        sensitivity = detect_sensitive_columns(schema)
-<<<<<<< HEAD
-        sensitive_cols = [c for c, risk in sensitivity.items() if risk == "HIGH"]
-
-        df_model = df.drop(columns=sensitive_cols, errors="ignore")
-        df_model = encode(df_model)
+        if y is None:
+            raise ValueError("❌ Target missing")
 
         if self.global_feature_list is not None:
             df_model = df_model.reindex(columns=self.global_feature_list, fill_value=0)
 
-        X_df = df_model.drop(columns=[target], errors="ignore")
-        X_df = X_df.apply(pd.to_numeric, errors="coerce").fillna(0).astype(np.float64)
-        X = X_df.to_numpy(dtype=np.float64)
+        X = df_model.to_numpy(dtype=np.float64)
 
-        y = LabelEncoder().fit_transform(df[target])
+        # ✅ GLOBAL SAFE NORMALIZATION
+        mean = np.mean(X, axis=0)
+        std = np.std(X, axis=0) + 1e-8
+        X = (X - mean) / std
+
         num_classes = len(np.unique(y))
 
-=======
-
-        sensitive_cols = [
-            c for c, risk in sensitivity.items()
-            if risk == "HIGH"
-        ]
-
-        # Remove sensitive columns
-        df_model = df.drop(columns=sensitive_cols, errors="ignore")
-
-        # Encode categorical features
-        df_model = encode(df_model)
-
-        # GLOBAL FEATURE ALIGNMENT
-        if self.global_feature_list is not None:
-            df_model = df_model.reindex(
-                columns=self.global_feature_list,
-                fill_value=0
-            )
-
-        # Separate features and target
-        X_df = df_model.drop(columns=[target], errors="ignore")
-
-        # Force numeric
-        X_df = X_df.apply(pd.to_numeric, errors="coerce")
-        X_df = X_df.fillna(0)
-        X_df = X_df.astype(np.float64)
-
-        X = X_df.to_numpy(dtype=np.float64)
-
-        # Target encoding (multi-class)
-        y = LabelEncoder().fit_transform(df[target])
-        num_classes = len(np.unique(y))
-
-        # Dimensionality reduction (optional)
->>>>>>> 19b0456 (Initial federated privacy agents code)
-        if X.shape[1] > 200:
-            pca = PCA(n_components=200)
-            X = pca.fit_transform(X)
-
-<<<<<<< HEAD
-        X = (X - np.mean(X, axis=0)) / (np.std(X, axis=0) + 1e-8)
-
-        # --- NEW: SPLIT DATA INTO TRAIN AND VALIDATION ---
-        # We split 80% for training and 20% for validation to check generalization
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, test_size=0.2, random_state=42, stratify=y
         )
-
-        classes = np.unique(y_train)
-        class_weights = compute_class_weight('balanced', classes=classes, y=y_train)
-        sample_weights_train = class_weights[y_train]
-=======
-        # Normalize
-        X = (X - np.mean(X, axis=0)) / (np.std(X, axis=0) + 1e-8)
-
-        # class weights (handle imbalance)
-        classes = np.unique(y)
-        class_weights = compute_class_weight('balanced', classes=classes, y=y)
-        sample_weights = class_weights[y]
-
-        print("Actual feature count:", X.shape[1])
-        print("Feature dtype:", X.dtype)
->>>>>>> 19b0456 (Initial federated privacy agents code)
 
         best = None
         strategy_results = []
 
         for strategy in strategies:
-<<<<<<< HEAD
-            model_dim = X_train.shape[1]
-            model = FederatedModel(model_dim, num_classes)
+            model = FederatedModel(X_train.shape[1], num_classes)
 
-            # IMPROVED LOADING: Handle shape mismatches safely
             if self.global_weights is not None:
-                g_w = self.global_weights
-                # Determine the overlapping shape
-                r = min(g_w.shape[0], model.weights.shape[0])
-                c = min(g_w.shape[1], model.weights.shape[1])
-                # Inject global knowledge into the new local model
-                model.weights[:r, :c] = g_w[:r, :c]
-                print(f"📥 Loaded global weights (subset {r}x{c})")
+                g = self.global_weights
+                r = min(g.shape[0], model.weights.shape[0])
+                c = min(g.shape[1], model.weights.shape[1])
+                model.weights[:r, :c] = g[:r, :c]
 
             initial_weights = model.weights.copy()
 
-            # Training Loop on X_train
             for _ in range(strategy["epochs"]):
                 logits = X_train @ model.weights
+
                 exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
                 probs = exp / np.sum(exp, axis=1, keepdims=True)
+
                 one_hot = np.eye(num_classes)[y_train]
-                grad = (X_train.T @ ((probs - one_hot) * sample_weights_train[:, None])) / len(y_train)
-=======
 
-            model_dim = X.shape[1]
-            model = FederatedModel(model_dim, num_classes)
+                grad = (X_train.T @ (probs - one_hot)) / len(y_train)
 
-            if self.global_weights is not None:
-                if isinstance(self.global_weights, np.ndarray):
-                    if self.global_weights.shape == model.weights.shape:
-                        model.weights = self.global_weights.copy()
+                # ✅ PROPER DP NOISE scaling
+                grad_norm = np.linalg.norm(grad)
+                noise_scale = grad_norm / (strategy["epsilon"] + 1e-8)
 
-            initial_weights = model.weights.copy()
+                noise = np.random.laplace(0, noise_scale, size=grad.shape)
 
-            # custom training with class weights
-            for _ in range(strategy["epochs"]):
+                model.weights -= strategy["lr"] * (grad + noise)
 
-                logits = X @ model.weights
-                exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
-                probs = exp / np.sum(exp, axis=1, keepdims=True)
-
-                one_hot = np.eye(num_classes)[y]
-
-                # weighted gradient
-                grad = (X.T @ ((probs - one_hot) * sample_weights[:, None])) / len(y)
-
->>>>>>> 19b0456 (Initial federated privacy agents code)
-                model.weights -= strategy["lr"] * grad
+            accuracy = np.mean(np.argmax(X_val @ model.weights, axis=1) == y_val)
 
             update = model.weights - initial_weights
 
-<<<<<<< HEAD
-            # --- NEW: EVALUATE ON VALIDATION SET (X_val) ---
-            val_logits = X_val @ model.weights
-            preds = np.argmax(val_logits, axis=1)
-            accuracy = np.mean(preds == y_val)
-
-            reward = self.compute_reward(accuracy, strategy["epsilon"])
-            print(f"🔍 Strategy {strategy} → Val Accuracy={accuracy:.4f}, Reward={reward}")
-=======
-            # multi-class prediction
-            logits = X @ model.weights
-            exp = np.exp(logits - np.max(logits, axis=1, keepdims=True))
-            probs = exp / np.sum(exp, axis=1, keepdims=True)
-            preds = np.argmax(probs, axis=1)
-
-            accuracy = np.mean(preds == y)
-            reward = self.compute_reward(accuracy, strategy["epsilon"])
-
-            print(f"🔍 Strategy {strategy} → Accuracy={accuracy:.4f}, Reward={reward}")
->>>>>>> 19b0456 (Initial federated privacy agents code)
-
             strategy_results.append({
                 "country": self.country,
-                "strategy": strategy,
                 "accuracy": accuracy,
-                "reward": reward
+                "epsilon": strategy["epsilon"],
+                "reward": 1
             })
 
+            print(f"🔍 Strategy {strategy} → Val Accuracy={accuracy:.4f}")
+
             if best is None or accuracy > best[2]:
-                best = (update, strategy, accuracy, reward)
+                best = (update, strategy, accuracy, 1)
 
         return (*best, strategy_results)
 
     # ===============================
-    # MAIN EXECUTION
+    # MAIN
     # ===============================
     def process(self):
-
         df = self.load_data()
+        target = self.infer_target_column(df)
 
         schema = infer_schema(df)
         sensitivity = detect_sensitive_columns(schema)
-
-        target = self.infer_target_column(df)
-        print("🎯 Target column:", target)
 
         df = apply_privacy(df, sensitivity, self.country)
         df = sanitize(df)
@@ -385,22 +214,9 @@ class HospitalAgent:
         analysis = self.analyze_dataset(df, sensitivity, target)
         strategies = self.decide_strategies(analysis)
 
-        update, strategy, accuracy, reward, strategy_results = \
-            self.train_with_planning(df, strategies, target)
+        update, strategy, acc, reward, res = self.train_with_planning(df, strategies, target)
 
-        clip_value = 5.0
-        update = np.clip(update, -clip_value, clip_value)
-
-        update = add_differential_privacy(update, strategy["epsilon"])
-
-        save_experience({
-            "country": self.country,
-            "rows": analysis["rows"],
-            "epsilon": strategy["epsilon"],
-            "lr": strategy["lr"],
-            "score": accuracy,
-            "reward": reward
-        })
+        update = np.clip(update, -10.0, 10.0)
 
         return {
             "country": self.country,
@@ -408,9 +224,6 @@ class HospitalAgent:
             "weights": update,
             "analysis": analysis,
             "strategy": strategy,
-            "strategy_results": strategy_results
+            "strategy_results": res
         }
-<<<<<<< HEAD
-=======
 
->>>>>>> 19b0456 (Initial federated privacy agents code)

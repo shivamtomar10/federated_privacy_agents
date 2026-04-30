@@ -1,27 +1,12 @@
 # system/orchestrator.py
 
-<<<<<<< HEAD
 import pandas as pd
 import numpy as np
+import os
 from collections import Counter
 
-# Visualizer import
-from system.visualizer import plot_federated_metrics
+from system.visualizer import plot_federated_metrics, plot_research_graphs
 
-# Core imports
-=======
-from collections import Counter
-
->>>>>>> 19b0456 (Initial federated privacy agents code)
-from core.schema_inference import infer_schema
-from core.sensitivity_detector import detect_sensitive_columns
-from core.privacy import apply_privacy
-from core.data_sanitizer import sanitize
-
-<<<<<<< HEAD
-# Agent imports
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
 from agents.hospital_agent import HospitalAgent
 from agents.global_agent import GlobalAgent
 from agents.attack_detector import AttackDetector
@@ -29,186 +14,182 @@ from agents.attack_detector import AttackDetector
 
 class FederatedOrchestrator:
     """
-    Multi-Round Federated Learning Orchestrator with feature alignment.
-<<<<<<< HEAD
-    Tracks metrics across rounds to generate performance visualizations.
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
+    Multi-Round Federated Learning Orchestrator
+    - Handles feature alignment
+    - Tracks metrics across rounds
+    - Generates research graphs
+    - Improved stability + research tracking
     """
 
     def __init__(self, datasets):
         self.datasets = datasets
         self.attack_detector = AttackDetector()
         self.global_agent = GlobalAgent()
+        self.final_reports = []
+        self.final_total_rows = 0
+        self.global_feature_list = None
 
-    def run(self, rounds=3):
+    def run(self, rounds=5):
+        print("\n🚀 Starting Research-Grade Federated Learning")
 
-        print("\n🚀 Starting Multi-Round Federated Learning")
         global_weights = None
-        global_feature_list = None
 
-<<<<<<< HEAD
-        # This list will store metrics for every round/country for plotting
         history_data = []
+        norm_history = {country: [] for country in self.datasets.keys()}
+        global_norm_history = []  # ✅ NEW
 
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
         for r in range(rounds):
-
             print("\n" + "=" * 60)
             print(f"🌍 FEDERATED ROUND {r + 1}")
             print("=" * 60)
 
             country_updates = {}
-            global_numeric_features = set()
-            global_class_counts = Counter()
-            total_rows = 0
-            full_analysis_reports = []
+            total_rows_this_round = 0
+            round_reports = []
 
-            # --------------------------------------
-            # 1️⃣ Feature Alignment Phase (Round 1 only)
-            # --------------------------------------
+            # ------------------------------
+            # 1️⃣ Feature Alignment (Round 0)
+            # ------------------------------
             if r == 0:
-                print("\n🔎 Collecting global feature space...")
-
+                print("\n🔎 Handshake: Collecting global feature space...")
                 all_features = set()
 
                 for country, path in self.datasets.items():
-<<<<<<< HEAD
-=======
-
->>>>>>> 19b0456 (Initial federated privacy agents code)
                     temp_agent = HospitalAgent(country, path)
                     df = temp_agent.load_data()
-
-                    schema = infer_schema(df)
-                    sensitivity = detect_sensitive_columns(schema)
-
                     target = temp_agent.infer_target_column(df)
-                    df = apply_privacy(df, sensitivity, country)
-                    df = sanitize(df)
 
                     features = temp_agent.get_feature_list(df, target)
                     all_features.update(features)
 
-                global_feature_list = sorted(list(all_features))
-<<<<<<< HEAD
-=======
+                self.global_feature_list = sorted(list(all_features))
+                print(f"🌐 Global feature dimension: {len(self.global_feature_list)}")
 
->>>>>>> 19b0456 (Initial federated privacy agents code)
-                print("🌐 Global feature dimension:", len(global_feature_list))
+            # ------------------------------
+            # 2️⃣ Distributed Training (SHUFFLED)
+            # ------------------------------
+            items = list(self.datasets.items())
+            np.random.shuffle(items)  # ✅ remove ordering bias
 
-            # --------------------------------------
-            # 2️⃣ Run Hospital Agents
-            # --------------------------------------
-            for country, path in self.datasets.items():
-
-                print(f"\n🏥 Processing {country.upper()} dataset")
+            for country, path in items:
+                print(f"\n🏥 Hospital Node: {country.upper()}")
 
                 hospital = HospitalAgent(
                     country=country,
                     csv_path=path,
                     global_weights=global_weights,
-                    global_feature_list=global_feature_list
+                    global_feature_list=self.global_feature_list
                 )
 
-<<<<<<< HEAD
-                # Process local training and privacy preservation
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
-                update = hospital.process()
-                country_updates[country] = update
+                result = hospital.process()
+                country_updates[country] = result
 
-                analysis = update["analysis"]
-                strategy = update["strategy"]
+                # Track weight norm
+                w_norm = float(np.linalg.norm(result["weights"]))
+                norm_history[country].append(w_norm)
 
-<<<<<<< HEAD
-                # --- CAPTURE METRICS FOR VISUALIZATION ---
-                # We pull the best accuracy achieved in the local strategy search
-                best_acc = update["strategy_results"][-1]["accuracy"]
+                # Extract best strategy
+                best_strategy = max(
+                    result["strategy_results"],
+                    key=lambda x: x["accuracy"]
+                )
+
                 history_data.append({
                     "round": r + 1,
                     "country": country,
-                    "accuracy": best_acc,
-                    "epsilon": strategy["epsilon"],
-                    "reward": update["strategy_results"][-1]["reward"],
-                    "rows": analysis["rows"]
+                    "accuracy": best_strategy["accuracy"],
+                    "epsilon": best_strategy["epsilon"],
+                    "rows": result["analysis"]["rows"],
+                    "reward": best_strategy["reward"]
                 })
 
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
-                full_analysis_reports.append({
-                    "country": country,
-                    "target_column": update["target_column"],
-                    "analysis": analysis,
-                    "strategy": strategy
-                })
+                round_reports.append(result)
+                total_rows_this_round += result["analysis"]["rows"]
 
-                global_numeric_features.update(analysis["numeric_features"])
-                global_class_counts.update(analysis.get("class_counts", {}))
-                total_rows += analysis["rows"]
+            # ------------------------------
+            # 3️⃣ Byzantine Filtering
+            # ------------------------------
+            raw_weights = [u["weights"] for u in country_updates.values()]
+            clean_indices = self.attack_detector.inspect(raw_weights)
 
-            # --------------------------------------
-            # 3️⃣ Aggregate Global Model
-            # --------------------------------------
-            global_weights, _ = self.global_agent.aggregate(country_updates)
-<<<<<<< HEAD
+            if not clean_indices:
+                print("⚠️ Byzantine detector rejected all clients → fallback to all")
+                clean_indices = list(range(len(country_updates)))
 
-            if global_weights is None:
-                print("⚠️ Warning: Global weights aggregation failed!")
+            filtered_updates = {
+                k: v for idx, (k, v) in enumerate(country_updates.items())
+                if idx in clean_indices
+            }
+
+            current_norms = [
+                round(norm_history[c][-1], 4)
+                for c in self.datasets.keys()
+            ]
+            print(f"📊 Weight Norms this round: {current_norms}")
+
+            # ------------------------------
+            # 4️⃣ Aggregation
+            # ------------------------------
+            global_weights, meta = self.global_agent.aggregate(filtered_updates)
+
+            if "error" in meta:
+                print("⚠️ Aggregation skipped due to no valid updates")
+
+            elif global_weights is not None:
+                # ✅ NORMALIZATION (CRITICAL FIX)
+                global_weights = global_weights / (np.linalg.norm(global_weights) + 1e-8)
+
+                g_norm = float(np.linalg.norm(global_weights))
+                global_norm_history.append(g_norm)
+
+                print(f"✅ Round {r+1} Aggregation Complete. Global Norm: {g_norm:.4f}")
+
             else:
-                print(f"✅ Aggregation complete. Weight Norm: {np.linalg.norm(global_weights):.2f}")
+                print("⚠️ Aggregation failed — keeping previous weights")
 
-            # --------------------------------------
-            # 4️⃣ Final Report (Summary of last round)
-            # --------------------------------------
+            # Save final round
             if r == rounds - 1:
-=======
-            print(f"\n✅ Aggregation complete for Round {r + 1}")
+                self.final_reports = round_reports
+                self.final_total_rows = total_rows_this_round
 
-            # --------------------------------------
-            # 4️⃣ Final Report (Last Round Only)
-            # --------------------------------------
-            if r == rounds - 1:
+        # ------------------------------
+        # 5️⃣ Final Report + Graphs
+        # ------------------------------
+        self._print_final_report()
 
->>>>>>> 19b0456 (Initial federated privacy agents code)
-                print("\n🌍 FINAL GLOBAL AI AGENT REPORT\n")
-
-                for report in full_analysis_reports:
-                    analysis = report["analysis"]
-                    strategy = report["strategy"]
-
-                    print(f"📌 Country: {report['country']}")
-                    print(f"Target Column: {report['target_column']}")
-                    print(f"Rows: {analysis['rows']}")
-                    print(f"Numeric Features: {analysis['numeric_features']}")
-                    print(f"Sensitive Features: {analysis['sensitive_features']}")
-                    print(f"Sensitive Ratio: {analysis['sensitive_ratio']:.2f}")
-                    print(f"Class Imbalance: {analysis['class_imbalance']:.2f}")
-                    print(f"DP ε: {strategy['epsilon']}")
-                    print(f"Epochs: {strategy['epochs']}")
-                    print(f"Risk Level: {strategy['risk_level']}\n")
-
-                print(f"🌐 Total rows across countries: {total_rows}")
-                print(f"🌐 Combined numeric features: {sorted(global_numeric_features)}")
-                print(f"🌐 Global class distribution: {dict(global_class_counts)}")
-
-<<<<<<< HEAD
-        # --------------------------------------
-        # 5️⃣ GENERATE VISUALIZATIONS
-        # --------------------------------------
-        print("\n📊 Generating visual reports for the reviewer...")
         history_df = pd.DataFrame(history_data)
-        plot_federated_metrics(history_df)
 
-=======
->>>>>>> 19b0456 (Initial federated privacy agents code)
-        print("\n🎉 Multi-Round Federated Learning Completed Successfully")
+        if not os.path.exists("metrics"):
+            os.makedirs("metrics")
+
+        plot_federated_metrics(history_df)
+        plot_research_graphs(history_df, norm_history)
+
+        print("\n🎉 All Research Graphs generated in 'metrics/'")
 
         return {
-            "global_weights": global_weights
+            "global_weights": global_weights,
+            "global_norm_history": global_norm_history  # ✅ extra research output
         }
-<<<<<<< HEAD
-=======
 
->>>>>>> 19b0456 (Initial federated privacy agents code)
+    def _print_final_report(self):
+        print("\n🌍 FINAL GLOBAL AI AGENT REPORT\n")
+
+        global_distribution = Counter()
+
+        for report in self.final_reports:
+            ana = report["analysis"]
+
+            print(
+                f"📌 {report['country'].upper()} | "
+                f"Rows: {ana['rows']} | "
+                f"DP ε: {report['strategy']['epsilon']} | "
+                f"Risk: {report['strategy']['risk_level']}"
+            )
+
+            global_distribution.update(ana["class_counts"])
+
+        print(f"\n🌐 Total Data: {self.final_total_rows} rows")
+        print(f"🌐 Global Features: {self.global_feature_list}")
+        print(f"🌐 Class Distribution: {dict(global_distribution)}")
+
