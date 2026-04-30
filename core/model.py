@@ -60,3 +60,7 @@ class FederatedModel:
             preds = np.argmax(logits, axis=1)
 
         return np.mean(preds == y)
+<<<<<<< HEAD
+=======
+
+>>>>>>> 19b0456 (Initial federated privacy agents code)

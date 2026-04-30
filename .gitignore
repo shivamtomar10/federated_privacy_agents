@@ -4,4 +4,7 @@ __pycache__/
 data/
 agent_memory.json
 metrics/
+<<<<<<< HEAD
 __pycache__/
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)

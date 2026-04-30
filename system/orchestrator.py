@@ -1,5 +1,6 @@
 # system/orchestrator.py
 
+<<<<<<< HEAD
 import pandas as pd
 import numpy as np
 from collections import Counter
@@ -8,12 +9,19 @@ from collections import Counter
 from system.visualizer import plot_federated_metrics
 
 # Core imports
+=======
+from collections import Counter
+
+>>>>>>> 19b0456 (Initial federated privacy agents code)
 from core.schema_inference import infer_schema
 from core.sensitivity_detector import detect_sensitive_columns
 from core.privacy import apply_privacy
 from core.data_sanitizer import sanitize
 
+<<<<<<< HEAD
 # Agent imports
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)
 from agents.hospital_agent import HospitalAgent
 from agents.global_agent import GlobalAgent
 from agents.attack_detector import AttackDetector
@@ -22,7 +30,10 @@ from agents.attack_detector import AttackDetector
 class FederatedOrchestrator:
     """
     Multi-Round Federated Learning Orchestrator with feature alignment.
+<<<<<<< HEAD
     Tracks metrics across rounds to generate performance visualizations.
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)
     """
 
     def __init__(self, datasets):
@@ -36,9 +47,12 @@ class FederatedOrchestrator:
         global_weights = None
         global_feature_list = None
 
+<<<<<<< HEAD
         # This list will store metrics for every round/country for plotting
         history_data = []
 
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)
         for r in range(rounds):
 
             print("\n" + "=" * 60)
@@ -60,6 +74,10 @@ class FederatedOrchestrator:
                 all_features = set()
 
                 for country, path in self.datasets.items():
+<<<<<<< HEAD
+=======
+
+>>>>>>> 19b0456 (Initial federated privacy agents code)
                     temp_agent = HospitalAgent(country, path)
                     df = temp_agent.load_data()
 
@@ -74,6 +92,10 @@ class FederatedOrchestrator:
                     all_features.update(features)
 
                 global_feature_list = sorted(list(all_features))
+<<<<<<< HEAD
+=======
+
+>>>>>>> 19b0456 (Initial federated privacy agents code)
                 print("🌐 Global feature dimension:", len(global_feature_list))
 
             # --------------------------------------
@@ -90,13 +112,17 @@ class FederatedOrchestrator:
                     global_feature_list=global_feature_list
                 )
 
+<<<<<<< HEAD
                 # Process local training and privacy preservation
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)
                 update = hospital.process()
                 country_updates[country] = update
 
                 analysis = update["analysis"]
                 strategy = update["strategy"]
 
+<<<<<<< HEAD
                 # --- CAPTURE METRICS FOR VISUALIZATION ---
                 # We pull the best accuracy achieved in the local strategy search
                 best_acc = update["strategy_results"][-1]["accuracy"]
@@ -109,6 +135,8 @@ class FederatedOrchestrator:
                     "rows": analysis["rows"]
                 })
 
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)
                 full_analysis_reports.append({
                     "country": country,
                     "target_column": update["target_column"],
@@ -124,6 +152,7 @@ class FederatedOrchestrator:
             # 3️⃣ Aggregate Global Model
             # --------------------------------------
             global_weights, _ = self.global_agent.aggregate(country_updates)
+<<<<<<< HEAD
 
             if global_weights is None:
                 print("⚠️ Warning: Global weights aggregation failed!")
@@ -134,6 +163,15 @@ class FederatedOrchestrator:
             # 4️⃣ Final Report (Summary of last round)
             # --------------------------------------
             if r == rounds - 1:
+=======
+            print(f"\n✅ Aggregation complete for Round {r + 1}")
+
+            # --------------------------------------
+            # 4️⃣ Final Report (Last Round Only)
+            # --------------------------------------
+            if r == rounds - 1:
+
+>>>>>>> 19b0456 (Initial federated privacy agents code)
                 print("\n🌍 FINAL GLOBAL AI AGENT REPORT\n")
 
                 for report in full_analysis_reports:
@@ -155,6 +193,7 @@ class FederatedOrchestrator:
                 print(f"🌐 Combined numeric features: {sorted(global_numeric_features)}")
                 print(f"🌐 Global class distribution: {dict(global_class_counts)}")
 
+<<<<<<< HEAD
         # --------------------------------------
         # 5️⃣ GENERATE VISUALIZATIONS
         # --------------------------------------
@@ -162,8 +201,14 @@ class FederatedOrchestrator:
         history_df = pd.DataFrame(history_data)
         plot_federated_metrics(history_df)
 
+=======
+>>>>>>> 19b0456 (Initial federated privacy agents code)
         print("\n🎉 Multi-Round Federated Learning Completed Successfully")
 
         return {
             "global_weights": global_weights
         }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 19b0456 (Initial federated privacy agents code)
